@@ -8,7 +8,8 @@ import me.matsubara.realisticvillagers.files.Config;
 import me.matsubara.realisticvillagers.files.Messages;
 import me.matsubara.realisticvillagers.gui.InteractGUI;
 import me.matsubara.realisticvillagers.gui.types.SkinGUI;
-import me.matsubara.realisticvillagers.manager.ReviveManager;
+import me.matsubara.realisticvillagers.manager.revive.MonumentAnimation;
+import me.matsubara.realisticvillagers.manager.revive.ReviveManager;
 import me.matsubara.realisticvillagers.nms.INMSConverter;
 import me.matsubara.realisticvillagers.tracker.VillagerTracker;
 import me.matsubara.realisticvillagers.util.ItemBuilder;
@@ -20,6 +21,7 @@ import org.bukkit.World;
 import org.bukkit.command.*;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
+import org.bukkit.entity.AbstractHorse;
 import org.bukkit.entity.Player;
 import org.bukkit.entity.Villager;
 import org.bukkit.event.HandlerList;
@@ -57,16 +59,16 @@ public class MainCommand implements CommandExecutor, TabCompleter {
             "skins");
     private static final List<String> HELP = Stream.of(
             "&8----------------------------------------",
-            "&6&lRealisticVillagers &f&oCommands &c(optional) <required>",
+            "&6&lRealisticVillagers &f&oCommands &c<required> | [optional]",
             "&e/rv reload &f- &7Reload configuration files.",
-            "&e/rv give-ring (player) &f- &7Gives a wedding ring.",
-            "&e/rv give-whistle (player) &f- &7Gives a whistle.",
-            "&e/rv give-divorce-papers (player) &f- &7Gives divorce papers.",
-            "&e/rv give-cross (player) &f- &7Gives a cross.",
-            "&e/rv force-divorce (player) &f- &7Forces the divorce of a player.",
+            "&e/rv give-ring [player] &f- &7Gives a wedding ring.",
+            "&e/rv give-whistle [player] &f- &7Gives a whistle.",
+            "&e/rv give-divorce-papers [player] &f- &7Gives divorce papers.",
+            "&e/rv give-cross [player] &f- &7Gives a cross.",
+            "&e/rv force-divorce [player] &f- &7Forces the divorce of a player.",
             "&e/rv add-skin <sex> <age-stage> <texture> <signature> &f- &7Add a new skin (from the console).",
             "&e/rv set-skin <sex> <id> &f- &7Gives you an item to change the skin of a villager.",
-            "&e/rv skins (sex) (age-stage) (page) &f- &7Manage all skins.",
+            "&e/rv skins [sex] [age-stage] [page] &f- &7Manage all skins.",
             "&8----------------------------------------").map(PluginUtils::translate).toList();
     private static final List<String> SKIN_ID_ARGS = List.of("<id>");
     private static final List<String> TEXTURE_ARGS = List.of("<texture>");
@@ -197,6 +199,7 @@ public class MainCommand implements CommandExecutor, TabCompleter {
         boolean skinsDisabled = Config.DISABLE_SKINS.asBool();
         boolean nametagsDisabled = Config.DISABLE_NAMETAGS.asBool();
         boolean reviveEnabled = Config.REVIVE_ENABLED.asBool();
+        boolean tameHorsesEnabled = Config.TAME_HORSES.asBool();
 
         messages.send(sender, Messages.Message.RELOADING);
 
@@ -210,7 +213,7 @@ public class MainCommand implements CommandExecutor, TabCompleter {
         ReviveManager reviveManager = plugin.getReviveManager();
 
         // Cancel all revivals.
-        for (ReviveManager.MonumentAnimation animation : reviveManager.getRunningTasks().values()) {
+        for (MonumentAnimation animation : reviveManager.getRunningTasks().values()) {
             plugin.getServer().getScheduler().cancelTask(animation.getTaskId());
         }
 
@@ -261,6 +264,15 @@ public class MainCommand implements CommandExecutor, TabCompleter {
                         // Only disable nametags if skins are enabled.
                         Villager bukkit = npc.bukkit();
                         if (!tracker.isInvalid(bukkit)) tracker.refreshNPCSkin(bukkit, false);
+                    });
+
+            handleChangedOption(
+                    tameHorsesEnabled,
+                    Config.TAME_HORSES.asBool(),
+                    (npc, state) -> {
+                        if (!state && npc.bukkit().getVehicle() instanceof AbstractHorse) {
+                            npc.bukkit().leaveVehicle();
+                        }
                     });
 
             if (reviveEnabled == Config.REVIVE_ENABLED.asBool()) return;

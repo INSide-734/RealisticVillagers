@@ -109,6 +109,9 @@ public enum Config {
     NEW_SKIN_TITLE("input-gui.new-skin.title"),
     NEW_SKIN_TEXT("input-gui.new-skin.text"),
 
+    PLAYERS_TITLE("input-gui.players.title"),
+    PLAYERS_TEXT("input-gui.players.text"),
+
     FISHING_COOLDOWN("fishing-cooldown"),
 
     USE_VILLAGER_SOUNDS("use-villager-sounds"),
@@ -168,7 +171,8 @@ public enum Config {
     REVIVE_BOSSBAR_PROGRESS_TYPE("revive.boss-bar.progress-type"),
     REVIVE_BOSSBAR_COLOR("revive.boss-bar.color"),
     REVIVE_BOSSBAR_STYLE("revive.boss-bar.style"),
-    REVIVE_BOSSBAR_FLAGS("revive.boss-bar.flags");
+    REVIVE_BOSSBAR_FLAGS("revive.boss-bar.flags"),
+    TAME_HORSES("tame-horses");
 
     private final String path;
     private final RealisticVillagers plugin = JavaPlugin.getPlugin(RealisticVillagers.class);

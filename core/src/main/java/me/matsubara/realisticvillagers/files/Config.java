@@ -35,7 +35,12 @@ public enum Config {
     ARROW_STATUS("arrow-status"),
 
     CUSTOM_NAME_SHOW_JOB_BLOCK("custom-nametags.show-job-block"),
-    CUSTOM_NAME_LINES("custom-nametags.lines"),
+    CUSTOM_NAME_VILLAGER_LINES("custom-nametags.lines.villager"),
+    CUSTOM_NAME_TRADER_LINES("custom-nametags.lines.wandering-trader"),
+
+    SKIN_PREVIEW_SECONDS("skin-preview.seconds"),
+    SKIN_PREVIEW_MESSAGE("skin-preview.message"),
+    SKIN_PREVIEW_RAINBOW_MESSAGE("skin-preview.rainbow-message"),
 
     VILLAGER_MAX_HEALTH("villager-max-health"),
 
@@ -88,6 +93,7 @@ public enum Config {
     VILLAGER_DEFEND_FAMILY_MEMBER("villager-defend-family-member"),
     VILLAGER_DEFEND_HERO_OF_THE_VILLAGE("villager-defend-hero-of-the-village"),
     VILLAGER_DEFEND_FOLLOWING_PLAYER("villager-defend-following-player"),
+    VILLAGER_DEFEND_ATTACK_PLAYERS("villager-defend-attack-players"),
 
     REPUTATION_REQUIRED_TO_MARRY("reputation-required-to-marry"),
     REPUTATION_REQUIRED_TO_PROCREATE("reputation-required-to-procreate"),

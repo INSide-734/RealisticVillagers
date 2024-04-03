@@ -1,5 +1,13 @@
 package me.matsubara.realisticvillagers.listener;
 
+import com.comphenix.protocol.PacketType;
+import com.comphenix.protocol.ProtocolLibrary;
+import com.comphenix.protocol.events.ListenerPriority;
+import com.comphenix.protocol.events.PacketAdapter;
+import com.comphenix.protocol.events.PacketContainer;
+import com.comphenix.protocol.events.PacketEvent;
+import com.comphenix.protocol.wrappers.EnumWrappers;
+import com.comphenix.protocol.wrappers.WrappedEnumEntityUseAction;
 import com.comphenix.protocol.wrappers.WrappedSignedProperty;
 import me.matsubara.realisticvillagers.RealisticVillagers;
 import me.matsubara.realisticvillagers.data.ExpectingType;
@@ -10,13 +18,16 @@ import me.matsubara.realisticvillagers.files.Messages;
 import me.matsubara.realisticvillagers.gui.InteractGUI;
 import me.matsubara.realisticvillagers.gui.types.MainGUI;
 import me.matsubara.realisticvillagers.manager.NametagManager;
+import me.matsubara.realisticvillagers.npc.NPC;
 import me.matsubara.realisticvillagers.tracker.VillagerTracker;
 import me.matsubara.realisticvillagers.util.ItemBuilder;
+import me.matsubara.realisticvillagers.util.PluginUtils;
 import me.matsubara.realisticvillagers.util.Reflection;
 import org.apache.commons.lang3.Validate;
 import org.bukkit.ChatColor;
 import org.bukkit.GameEvent;
 import org.bukkit.Material;
+import org.bukkit.Raid;
 import org.bukkit.entity.*;
 import org.bukkit.event.Cancellable;
 import org.bukkit.event.EventHandler;
@@ -35,21 +46,50 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
+import org.bukkit.potion.PotionEffectType;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import java.lang.invoke.MethodHandle;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-public final class VillagerListeners implements Listener {
+public final class VillagerListeners extends PacketAdapter implements Listener {
 
     private final RealisticVillagers plugin;
 
     private static final MethodHandle MODIFIERS = Reflection.getFieldGetter(EntityDamageEvent.class, "modifiers");
 
     public VillagerListeners(RealisticVillagers plugin) {
+        super(plugin, ListenerPriority.HIGHEST, PacketType.Play.Client.USE_ENTITY);
         this.plugin = plugin;
+        ProtocolLibrary.getProtocolManager().addPacketListener(this);
+    }
+
+    @Override
+    public void onPacketReceiving(@NotNull PacketEvent event) {
+        PacketContainer packet = event.getPacket();
+
+        WrappedEnumEntityUseAction actionWrapper = packet.getEnumEntityUseActions().readSafely(0);
+
+        EnumWrappers.EntityUseAction action = actionWrapper.getAction();
+        if (action == EnumWrappers.EntityUseAction.ATTACK) return;
+
+        Integer id = packet.getIntegers().readSafely(0);
+        if (id == null) return;
+
+        Optional<NPC> npc;
+        if ((npc = plugin.getTracker().getNPC(id)).isEmpty()) {
+            return;
+        }
+
+        // PlayerInteractEntityEvent won't be called if this one is cancelled.
+        // With this change, we fix the client freezing for some seconds when right-clicking a villager.
+        EquipmentSlot slot = actionWrapper.getHand() == EnumWrappers.Hand.MAIN_HAND ? EquipmentSlot.HAND : EquipmentSlot.OFF_HAND;
+        if (handleInteract(event.getPlayer(), slot, npc.get().getVillager().bukkit())) {
+            event.setCancelled(true);
+        }
     }
 
     @SuppressWarnings("deprecation")
@@ -194,114 +234,107 @@ public final class VillagerListeners implements Listener {
     // Changed the priority to LOW to support VTL.
     @EventHandler(priority = EventPriority.LOW, ignoreCancelled = true)
     public void onPlayerInteractEntity(@NotNull PlayerInteractEntityEvent event) {
-        Player player = event.getPlayer();
+        if (handleInteract(event.getPlayer(), event.getHand(), event.getRightClicked())) {
+            event.setCancelled(true);
+        }
+    }
 
-        ItemStack handItem = player.getInventory().getItem(event.getHand());
-        preventChangeSkinItemUse(event, handItem);
+    private boolean handleInteract(@NotNull Player player, EquipmentSlot hand, Entity entity) {
+        ItemStack item = player.getInventory().getItem(hand);
+        boolean cancel = preventChangeSkinItemUse(null, item);
 
-        if (!(event.getRightClicked() instanceof Villager villager)) return;
+        if (!(entity instanceof Villager villager)) return cancel;
 
         VillagerTracker tracker = plugin.getTracker();
 
-        if (Config.DISABLE_INTERACTIONS.asBool()) return;
-        if (tracker.isInvalid(villager, true)) return;
+        if (Config.DISABLE_INTERACTIONS.asBool()) return cancel;
+        if (tracker.isInvalid(villager, true)) return cancel;
 
         Optional<IVillagerNPC> optional = plugin.getConverter().getNPC(villager);
 
         IVillagerNPC npc = optional.orElse(null);
-        if (npc == null) return;
+        if (npc == null) return cancel;
 
-        if (event.getHand() != EquipmentSlot.HAND) {
-            event.setCancelled(true);
-            return;
-        }
+        if (hand != EquipmentSlot.HAND) return true;
 
-        // Prevent opening villager inventory.
-        event.setCancelled(true);
+        plugin.getServer().getScheduler().runTask(plugin, (() -> {
+            Messages messages = plugin.getMessages();
 
-        Messages messages = plugin.getMessages();
+            // Don't open GUI if using the whistle.
+            ItemMeta meta;
+            if (item != null && (meta = item.getItemMeta()) != null) {
+                PersistentDataContainer container = meta.getPersistentDataContainer();
+                if (container.has(plugin.getIsWhistleKey(), PersistentDataType.INTEGER)) return;
 
-        // Don't open GUI if using the whistle.
-        ItemMeta meta;
-        if (handItem != null && (meta = handItem.getItemMeta()) != null) {
-            PersistentDataContainer container = meta.getPersistentDataContainer();
-            if (container.has(plugin.getIsWhistleKey(), PersistentDataType.INTEGER)) return;
+                if (container.has(plugin.getSkinDataKey(), PersistentDataType.STRING)) {
+                    handleChangeSkinItem(player, npc, item);
+                    return;
+                }
 
-            if (container.has(plugin.getSkinDataKey(), PersistentDataType.STRING)) {
-                handleChangeSkinItem(player, npc, handItem);
+                if (item.getType() == Material.NAME_TAG && meta.hasDisplayName()) {
+                    handleRename(player, villager, item);
+                    return;
+                }
+
+                if (item.getType() == Material.LEAD) {
+                    if (npc.isInteracting() && npc.getInteractingWith().equals(player.getUniqueId()) && npc.isFollowing()) {
+                        messages.send(player, npc, Messages.Message.FOLLOW_ME_STOP);
+                        npc.stopInteracting();
+                    } else {
+                        plugin.getInventoryListeners().handleFollorOrStay(npc, player, InteractType.FOLLOW_ME, true);
+                    }
+                    return;
+                }
+            }
+
+            // Prevent interacting with villager if it's fighting.
+            if (npc.isFighting() || npc.isInsideRaid()) {
+                messages.send(player, Messages.Message.INTERACT_FAIL_FIGHTING_OR_RAID);
                 return;
             }
 
-            if (handItem.getType() == Material.NAME_TAG && meta.hasDisplayName()) {
-                handleRename(event);
+            if (npc.isProcreating()) {
+                messages.send(player, Messages.Message.INTERACT_FAIL_PROCREATING);
                 return;
             }
 
-            if (handItem.getType() == Material.LEAD) {
-                if (npc.isInteracting() && npc.getInteractingWith().equals(player.getUniqueId()) && npc.isFollowing()) {
+            if (isExpecting(player, npc, ExpectingType.GIFT)) return;
+            if (isExpecting(player, npc, ExpectingType.BED)) return;
+
+            if (npc.isInteracting()) {
+                if (!npc.getInteractingWith().equals(player.getUniqueId())) {
+                    messages.send(player, Messages.Message.INTERACT_FAIL_INTERACTING);
+                } else if (npc.isFollowing()) {
                     messages.send(player, npc, Messages.Message.FOLLOW_ME_STOP);
                     npc.stopInteracting();
-                } else {
-                    plugin.getInventoryListeners().handleFollorOrStay(npc, player, InteractType.FOLLOW_ME, true);
+                } else if (npc.isStayingInPlace()) {
+                    messages.send(player, npc, Messages.Message.STAY_HERE_STOP);
+                    npc.stopInteracting();
+                    npc.stopStayingInPlace();
                 }
+                // Otherwise, is in GUI so, do nothing.
                 return;
             }
-        }
 
-        // Prevent interacting with villager if it's fighting.
-        if (npc.isFighting() || npc.isInsideRaid()) {
-            messages.send(player, Messages.Message.INTERACT_FAIL_FIGHTING_OR_RAID);
-            return;
-        }
-
-        if (npc.isProcreating()) {
-            messages.send(player, Messages.Message.INTERACT_FAIL_PROCREATING);
-            return;
-        }
-
-
-        if (isExpecting(player, npc, ExpectingType.GIFT)) return;
-        if (isExpecting(player, npc, ExpectingType.BED)) return;
-
-        if (npc.isInteracting()) {
-            if (!npc.getInteractingWith().equals(player.getUniqueId())) {
-                messages.send(player, Messages.Message.INTERACT_FAIL_INTERACTING);
-            } else if (npc.isFollowing()) {
-                messages.send(player, npc, Messages.Message.FOLLOW_ME_STOP);
-                npc.stopInteracting();
-            } else if (npc.isStayingInPlace()) {
-                messages.send(player, npc, Messages.Message.STAY_HERE_STOP);
-                npc.stopInteracting();
-                npc.stopStayingInPlace();
+            if (villager.isTrading()) {
+                messages.send(player, Messages.Message.INTERACT_FAIL_TRADING);
+                return;
             }
-            // Otherwise, is in GUI so, do nothing.
-            return;
-        }
 
-        if (villager.isTrading()) {
-            messages.send(player, Messages.Message.INTERACT_FAIL_TRADING);
-            return;
-        }
+            // Open custom GUI.
+            new MainGUI(plugin, npc, player);
 
-        // Open custom GUI.
-        plugin.getServer().getScheduler().runTask(plugin, () -> new MainGUI(plugin, npc, player));
+            // Set interacting with id.
+            npc.setInteractingWithAndType(player.getUniqueId(), InteractType.GUI);
+        }));
 
-        // Set interacting with id.
-        npc.setInteractingWithAndType(player.getUniqueId(), InteractType.GUI);
+        return true;
     }
 
     // All this is checked in the invoker method.
     @SuppressWarnings({"DataFlowIssue", "OptionalGetWithoutIsPresent"})
-    private void handleRename(@NotNull PlayerInteractEntityEvent event) {
-        Villager villager = (Villager) event.getRightClicked();
-
-        Player player = event.getPlayer();
-        ItemStack item = player.getInventory().getItem(event.getHand());
-
+    private void handleRename(Player player, Villager villager, ItemStack item) {
         IVillagerNPC npc = plugin.getConverter().getNPC(villager).get();
-
-        // Prevent renaming villager, we'll do it ourself.
-        event.setCancelled(true);
 
         if (plugin.getInventoryListeners().notAllowedToModifyInventoryOrName(player, npc, Config.WHO_CAN_MODIFY_VILLAGER_NAME, "realisticvillagers.bypass.rename")) {
             plugin.getMessages().send(player, Messages.Message.INTERACT_FAIL_RENAME_NOT_ALLOWED);
@@ -343,14 +376,17 @@ public final class VillagerListeners implements Listener {
         return true;
     }
 
-    private void preventChangeSkinItemUse(Cancellable event, ItemStack item) {
+    private boolean preventChangeSkinItemUse(@Nullable Cancellable cancellable, ItemStack item) {
         ItemMeta meta;
-        if (item == null || (meta = item.getItemMeta()) == null) return;
+        if (item == null || (meta = item.getItemMeta()) == null) return false;
 
         PersistentDataContainer container = meta.getPersistentDataContainer();
         if (container.has(plugin.getSkinDataKey(), PersistentDataType.STRING)) {
-            event.setCancelled(true);
+            if (cancellable != null) cancellable.setCancelled(true);
+            return true;
         }
+
+        return false;
     }
 
     private void handleChangeSkinItem(Player player, @NotNull IVillagerNPC npc, @NotNull ItemStack handItem) {
@@ -359,9 +395,9 @@ public final class VillagerListeners implements Listener {
 
         Messages messages = plugin.getMessages();
         VillagerTracker tracker = plugin.getTracker();
-        Villager villager = npc.bukkit();
+        LivingEntity living = npc.bukkit();
 
-        VillagerTracker.SkinRelatedData relatedData = tracker.getRelatedData(villager, "none");
+        VillagerTracker.SkinRelatedData relatedData = tracker.getRelatedData(living, "none");
         WrappedSignedProperty property = relatedData.property();
 
         if (property != null && property.getName().equals("error")) {
@@ -388,7 +424,7 @@ public final class VillagerListeners implements Listener {
             return;
         }
 
-        boolean isAdult = villager.isAdult(), forBabies = relatedData.storage().getBoolean("none." + id + ".for-babies");
+        boolean isAdult = !(living instanceof Villager villager) || villager.isAdult(), forBabies = relatedData.storage().getBoolean("none." + id + ".for-babies");
         if ((isAdult && forBabies) || (!isAdult && !forBabies)) {
             messages.send(player, Messages.Message.SKIN_DIFFERENT_AGE_STAGE, string -> string.replace("%age-stage%", (forBabies ? Config.KID : Config.ADULT).asString()));
             return;
@@ -397,7 +433,7 @@ public final class VillagerListeners implements Listener {
         // Here, we change the id of the villager, so then we can check if the skin exists.
         npc.setSkinTextureId(id);
 
-        int skinId = tracker.getRelatedData(villager, "none", false).id();
+        int skinId = tracker.getRelatedData(living, "none", false).id();
         if (skinId == -1) {
             messages.send(player, Messages.Message.SKIN_TEXTURE_NOT_FOUND);
             return;
@@ -406,10 +442,10 @@ public final class VillagerListeners implements Listener {
         messages.send(player, Messages.Message.SKIN_DISGUISED, string -> string
                 .replace("%id%", String.valueOf(skinId))
                 .replace("%sex%", sex.equals("male") ? Config.MALE.asString() : Config.FEMALE.asString())
-                .replace("%profession%", plugin.getProfessionFormatted(villager.getProfession()))
+                .replace("%profession%", plugin.getProfessionFormatted(PluginUtils.getProfessionOrType(living)))
                 .replace("%age-stage%", isAdult ? Config.ADULT.asString() : Config.KID.asString()));
 
-        tracker.refreshNPCSkin(villager, false);
+        tracker.refreshNPCSkin(living, false);
 
         player.getInventory().removeItem(new ItemBuilder(handItem.clone())
                 .setAmount(1)
@@ -419,7 +455,9 @@ public final class VillagerListeners implements Listener {
     @SuppressWarnings({"deprecation", "unchecked"})
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onEntityDamage(@NotNull EntityDamageEvent event) {
-        if (!(event.getEntity() instanceof Villager villager)) return;
+        tryToDefendPlayer(event);
+
+        if (!(event.getEntity() instanceof AbstractVillager villager)) return;
         if (plugin.getTracker().isInvalid(villager, true)) return;
 
         Optional<IVillagerNPC> optional = plugin.getConverter().getNPC(villager);
@@ -470,7 +508,45 @@ public final class VillagerListeners implements Listener {
         }
     }
 
-    private boolean hasTotem(@NotNull Villager villager) {
+    private void tryToDefendPlayer(@NotNull EntityDamageEvent event) {
+        if (!Config.VILLAGER_DEFEND_ATTACK_PLAYERS.asBool()) return;
+
+        if (!(event.getEntity() instanceof Player player)
+                || !(event instanceof EntityDamageByEntityEvent byEntity)
+                || !(byEntity.getDamager() instanceof Player damager)) return;
+
+        for (Entity nearby : player.getNearbyEntities(16.0d, 16.0d, 16.0d)) {
+            if (!(nearby instanceof Villager villager)) continue;
+
+            Optional<IVillagerNPC> optional = plugin.getConverter().getNPC(villager);
+
+            // If the NPC can't attack or the damager is part of the family of the NPC, continue.
+            IVillagerNPC npc = optional.orElse(null);
+            if (npc == null
+                    || !npc.canAttack()
+                    || npc.isFamily(damager.getUniqueId(), true)) return;
+
+            if (npc.isFamily(player.getUniqueId(), true) && Config.VILLAGER_DEFEND_FAMILY_MEMBER.asBool()) {
+                npc.attack(damager);
+                continue;
+            }
+
+            Raid raid;
+            if (player.hasPotionEffect(PotionEffectType.HERO_OF_THE_VILLAGE)
+                    || ((raid = player.getWorld().locateNearestRaid(player.getLocation(), 5)) != null
+                    && raid.getHeroes().contains(player.getUniqueId()))
+                    && Config.VILLAGER_DEFEND_HERO_OF_THE_VILLAGE.asBool()) {
+                npc.attack(damager);
+                continue;
+            }
+
+            if (player.getUniqueId().equals(npc.getInteractingWith()) && Config.VILLAGER_DEFEND_FOLLOWING_PLAYER.asBool()) {
+                npc.attack(damager);
+            }
+        }
+    }
+
+    private boolean hasTotem(@NotNull AbstractVillager villager) {
         EntityEquipment equipment = villager.getEquipment();
         if (equipment == null) return false;
 

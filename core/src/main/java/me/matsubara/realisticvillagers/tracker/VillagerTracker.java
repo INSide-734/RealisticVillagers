@@ -1,25 +1,26 @@
 package me.matsubara.realisticvillagers.tracker;
 
+import com.comphenix.protocol.PacketType;
 import com.comphenix.protocol.ProtocolLibrary;
 import com.comphenix.protocol.ProtocolManager;
 import com.comphenix.protocol.wrappers.Pair;
 import com.comphenix.protocol.wrappers.WrappedGameProfile;
 import com.comphenix.protocol.wrappers.WrappedSignedProperty;
-import com.mojang.authlib.properties.Property;
-import com.mojang.authlib.properties.PropertyMap;
+import com.google.common.collect.Lists;
 import lombok.Getter;
 import me.matsubara.realisticvillagers.RealisticVillagers;
 import me.matsubara.realisticvillagers.entity.IVillagerNPC;
-import me.matsubara.realisticvillagers.event.VillagerRemoveEvent;
+import me.matsubara.realisticvillagers.event.RealisticRemoveEvent;
 import me.matsubara.realisticvillagers.files.Config;
 import me.matsubara.realisticvillagers.files.Messages;
 import me.matsubara.realisticvillagers.handler.npc.NPCHandler;
-import me.matsubara.realisticvillagers.handler.protocol.DisguiseHandler;
 import me.matsubara.realisticvillagers.handler.protocol.VillagerHandler;
 import me.matsubara.realisticvillagers.listener.spawn.BukkitSpawnListeners;
 import me.matsubara.realisticvillagers.listener.spawn.PaperSpawnListeners;
+import me.matsubara.realisticvillagers.manager.NametagManager;
 import me.matsubara.realisticvillagers.npc.NPC;
 import me.matsubara.realisticvillagers.npc.NPCPool;
+import me.matsubara.realisticvillagers.task.PreviewTask;
 import me.matsubara.realisticvillagers.util.PluginUtils;
 import org.bukkit.Bukkit;
 import org.bukkit.EntityEffect;
@@ -30,16 +31,14 @@ import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.entity.*;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
-import org.bukkit.event.entity.EntityDeathEvent;
-import org.bukkit.event.entity.EntityPortalEnterEvent;
-import org.bukkit.event.entity.EntityPortalEvent;
-import org.bukkit.event.entity.EntityTransformEvent;
+import org.bukkit.event.entity.*;
 import org.bukkit.event.player.PlayerJoinEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.world.EntitiesUnloadEvent;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.PluginManager;
+import org.bukkit.potion.PotionEffectType;
 import org.bukkit.scheduler.BukkitRunnable;
 import org.bukkit.scoreboard.Scoreboard;
 import org.bukkit.scoreboard.ScoreboardManager;
@@ -69,6 +68,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
 import java.util.logging.Logger;
 
+import static com.comphenix.protocol.PacketType.Play.Server.*;
+
 @Getter
 public final class VillagerTracker implements Listener {
 
@@ -79,23 +80,20 @@ public final class VillagerTracker implements Listener {
     private final Map<UUID, Integer> portalTransform = new HashMap<>();
     private final Set<IVillagerNPC> offlineVillagers = ConcurrentHashMap.newKeySet();
     private final Map<String, Pair<File, FileConfiguration>> files = new HashMap<>();
-    private final Map<UUID, Pair<Integer, PropertyMap>> oldProperties = new HashMap<>();
-    private final Map<UUID, Villager.Profession> selectedProfession = new HashMap<>();
+    private final Map<UUID, String> selectedProfession = new HashMap<>();
+    private final Map<UUID, PreviewTask> previews = new HashMap<>();
     private final VillagerHandler handler;
     private final MineskinClient mineskinClient;
     private final Random random = new Random();
 
     private static final String NAMETAG_TEAM_NAME = "RVNametag";
-    private static final String HIDE_NAMETAG_NAME = "abcdefghijklmnño";
+    public static final String HIDE_NAMETAG_NAME = "abcdefghijklmnño";
     private static final Predicate<Entity> APPLY_FOR_TRANSFORM = entity -> entity instanceof Villager || entity instanceof ZombieVillager;
     private static final List<String> WITHOUT_HAT = Arrays.asList("cleric", "leatherworker", "mason", "nitwit", "toolsmith");
 
     public VillagerTracker(RealisticVillagers plugin) {
         this.plugin = plugin;
-        this.pool = NPCPool
-                .builder(plugin)
-                .tabListRemoveTicks(40)
-                .build();
+        this.pool = new NPCPool(plugin);
         this.spawnListeners = new BukkitSpawnListeners(plugin);
 
         this.mineskinClient = new MineskinClient("MineSkin-JavaClient");
@@ -108,9 +106,13 @@ public final class VillagerTracker implements Listener {
 
         manager.registerEvents(this, plugin);
 
+        @SuppressWarnings("deprecation") ArrayList<PacketType> types = Lists.newArrayList(SPAWN_ENTITY, SPAWN_ENTITY_LIVING, ENTITY_STATUS);
+        if (plugin.getServer().getPluginManager().getPlugin("ViaVersion") != null) {
+            types.add(ENTITY_METADATA);
+        }
+
         ProtocolManager protocol = ProtocolLibrary.getProtocolManager();
-        protocol.addPacketListener(handler = new VillagerHandler(plugin));
-        protocol.addPacketListener(new DisguiseHandler(plugin));
+        protocol.addPacketListener(handler = new VillagerHandler(plugin, types));
     }
 
     public void updateMineskinApiKey() {
@@ -125,8 +127,8 @@ public final class VillagerTracker implements Listener {
         return null;
     }
 
-    private void removeData(@NotNull Villager villager) {
-        IVillagerNPC info = getOfflineByUUID(villager.getUniqueId());
+    private void removeData(@NotNull LivingEntity living) {
+        IVillagerNPC info = getOfflineByUUID(living.getUniqueId());
         if (info != null) offlineVillagers.remove(info);
     }
 
@@ -134,20 +136,20 @@ public final class VillagerTracker implements Listener {
         if (uuid == null) return null;
 
         // Try to send updated data.
-        if (Bukkit.getEntity(uuid) instanceof Villager villager) {
+        if (Bukkit.getEntity(uuid) instanceof AbstractVillager villager) {
             return updateData(villager);
         }
 
         return getOfflineByUUID(uuid);
     }
 
-    private void markAsDeath(Villager villager) {
-        handlePartner(villager);
-        removeData(villager);
+    private void markAsDeath(LivingEntity living) {
+        handlePartner(living);
+        removeData(living);
     }
 
-    private void handlePartner(Villager villager) {
-        Optional<IVillagerNPC> optional = plugin.getConverter().getNPC(villager);
+    private void handlePartner(LivingEntity living) {
+        Optional<IVillagerNPC> optional = plugin.getConverter().getNPC(living);
 
         IVillagerNPC npc = optional.orElse(null);
         if (npc == null) return;
@@ -195,18 +197,18 @@ public final class VillagerTracker implements Listener {
     @EventHandler
     public void onEntitiesUnload(@NotNull EntitiesUnloadEvent event) {
         for (Entity entity : event.getEntities()) {
-            if (!(entity instanceof Villager villager) || isInvalid(villager, true)) continue;
+            if (!(entity instanceof AbstractVillager villager) || isInvalid(villager, true)) continue;
             updateData(villager);
             removeNPC(entity.getEntityId());
         }
     }
 
-    public @Nullable IVillagerNPC updateData(Villager villager) {
+    public @Nullable IVillagerNPC updateData(LivingEntity living) {
         // Update the data after being unloaded.
-        Optional<IVillagerNPC> npc = plugin.getConverter().getNPC(villager);
+        Optional<IVillagerNPC> npc = plugin.getConverter().getNPC(living);
         if (npc.isEmpty()) return null;
 
-        removeData(villager);
+        removeData(living);
 
         IVillagerNPC offline = npc.get().getOffline();
         offlineVillagers.add(offline);
@@ -231,28 +233,28 @@ public final class VillagerTracker implements Listener {
         boolean isInfection = reason == EntityTransformEvent.TransformReason.INFECTION;
         if (!isInfection && reason != EntityTransformEvent.TransformReason.CURED) return;
 
-        // If villager isn't a custom one, the tag will be null.
+        // If villager isn't custom, the tag will be null.
         transformations.put(transformed.getUniqueId(), plugin.getConverter().getNPCTag((LivingEntity) entity, isInfection));
     }
 
     @EventHandler
     public void onEntityDeath(@NotNull EntityDeathEvent event) {
-        if (!(event.getEntity() instanceof Villager villager)) return;
+        if (!(event.getEntity() instanceof AbstractVillager villager)) return;
         markAsDeath(villager);
         plugin.getServer().getScheduler().runTaskLater(plugin, () -> removeNPC(event.getEntity().getEntityId()), 40L);
     }
 
     @EventHandler
-    public void onVillagerRemove(@NotNull VillagerRemoveEvent event) {
+    public void onVillagerRemove(@NotNull RealisticRemoveEvent event) {
         IVillagerNPC npc = event.getNPC();
         handler.getAllowSpawn().remove(npc.getUniqueId());
 
-        Villager bukkit = npc.bukkit();
+        LivingEntity bukkit = npc.bukkit();
         if (isInvalid(bukkit, true)) return;
 
-        VillagerRemoveEvent.RemovalReason reason = event.getReason();
-        if (reason != VillagerRemoveEvent.RemovalReason.DISCARDED) {
-            if (reason != VillagerRemoveEvent.RemovalReason.KILLED) updateData(bukkit);
+        RealisticRemoveEvent.RemovalReason reason = event.getReason();
+        if (reason != RealisticRemoveEvent.RemovalReason.DISCARDED) {
+            if (reason != RealisticRemoveEvent.RemovalReason.KILLED) updateData(bukkit);
             return;
         }
 
@@ -262,14 +264,14 @@ public final class VillagerTracker implements Listener {
 
     @EventHandler
     public void onEntityPortal(@NotNull EntityPortalEvent event) {
-        if (event.getEntity() instanceof Villager villager) {
+        if (event.getEntity() instanceof AbstractVillager villager) {
             portalTransform.put(villager.getUniqueId(), villager.getEntityId());
         }
     }
 
     @EventHandler
     public void onEntityPortalEnter(@NotNull EntityPortalEnterEvent event) {
-        if (!(event.getEntity() instanceof Villager villager)) return;
+        if (!(event.getEntity() instanceof AbstractVillager villager)) return;
 
         int previous = portalTransform.getOrDefault(villager.getUniqueId(), -1);
         if (previous == -1) return;
@@ -294,10 +296,28 @@ public final class VillagerTracker implements Listener {
     }
 
     @EventHandler
+    public void onEntityPotionEffect(@NotNull EntityPotionEffectEvent event) {
+        if (!event.getModifiedType().equals(PotionEffectType.INVISIBILITY)) return;
+
+        if (!(event.getEntity() instanceof LivingEntity living)) return;
+        if (isInvalid(living)) return;
+
+        NametagManager nametagManager = plugin.getNametagManager();
+        if (nametagManager == null) return;
+
+        plugin.getServer().getScheduler().runTask(plugin, () -> plugin.getConverter().getNPC(living).ifPresent(npc -> {
+            EntityPotionEffectEvent.Action action = event.getAction();
+            if (action == EntityPotionEffectEvent.Action.CLEARED || action == EntityPotionEffectEvent.Action.REMOVED) {
+                nametagManager.resetNametag(npc, null, true);
+            } else {
+                nametagManager.remove(npc);
+            }
+        }));
+    }
+
+    @EventHandler
     public void onPlayerQuit(@NotNull PlayerQuitEvent event) {
         UUID uniqueId = event.getPlayer().getUniqueId();
-        handler.getSleeping().remove(uniqueId);
-        oldProperties.remove(uniqueId);
         selectedProfession.remove(uniqueId);
     }
 
@@ -313,34 +333,37 @@ public final class VillagerTracker implements Listener {
         return pool.getNPC(entityId);
     }
 
-    public boolean isInvalid(@NotNull Villager villager, boolean ignoreSkinsState) {
-        return (!ignoreSkinsState && Config.DISABLE_SKINS.asBool())
-                || !plugin.getCompatibilityManager().shouldTrack(villager)
-                || plugin.isDisabledIn(villager.getWorld())
-                || plugin.getConverter().getNPC(villager).isEmpty();
+    public boolean isInvalid(@NotNull LivingEntity living, boolean ignoreSkinState) {
+        return (!ignoreSkinState && Config.DISABLE_SKINS.asBool())
+                || (!(living instanceof WanderingTrader) && (!(living instanceof Villager villager) || !plugin.getCompatibilityManager().shouldTrack(villager)))
+                || plugin.isDisabledIn(living.getWorld())
+                || plugin.getConverter().getNPC(living).isEmpty();
     }
 
-    public boolean isInvalid(Villager villager) {
-        return isInvalid(villager, false);
+    public boolean isInvalid(LivingEntity living) {
+        return isInvalid(living, false);
     }
 
-    public void spawnNPC(Villager villager) {
-        if (isInvalid(villager)) return;
+    public void spawnNPC(LivingEntity living) {
+        if (isInvalid(living)) return;
 
-        int entityId = villager.getEntityId();
+        int entityId = living.getEntityId();
         if (hasNPC(entityId)) return;
 
-        WrappedSignedProperty textures = getTextures(villager);
+        WrappedSignedProperty textures = getTextures(living);
         if (textures.getName().equals("error")) {
-            CompletableFuture<Skin> creator = getCreator(villager, textures);
+            CompletableFuture<Skin> creator = getCreator(living, textures);
             if (creator != null)
-                creator.thenAcceptAsync(skin -> spawnNPC(villager), mineskinClient.getRequestExecutor());
+                creator.thenAcceptAsync(skin -> spawnNPC(living), mineskinClient.getRequestExecutor());
             return;
         }
 
-        String defaultName = plugin.getConverter().getNPC(villager)
-                .map(IVillagerNPC::getVillagerName)
-                .orElse(villager.getName());
+        Optional<IVillagerNPC> optional = plugin.getConverter().getNPC(living);
+
+        IVillagerNPC npc = optional.orElse(null);
+        if (npc == null) return;
+
+        String defaultName = npc.getVillagerName();
 
         String name;
         if (Config.DISABLE_NAMETAGS.asBool()
@@ -349,7 +372,7 @@ public final class VillagerTracker implements Listener {
             name = HIDE_NAMETAG_NAME;
             checkNametagTeam();
         } else {
-            // Only show nametag if it's a valid one.
+            // Only show nametag if it's valid.
             name = defaultName;
         }
 
@@ -358,13 +381,13 @@ public final class VillagerTracker implements Listener {
 
         NPC.builder()
                 .profile(profile)
-                .location(villager.getLocation())
-                .spawnCustomizer(new NPCHandler(plugin, villager))
+                .spawnCustomizer(new NPCHandler(plugin))
                 .entityId(entityId)
+                .entity(npc)
                 .build(pool);
     }
 
-    private void checkNametagTeam() {
+    public void checkNametagTeam() {
         ScoreboardManager manager = Bukkit.getScoreboardManager();
         if (manager == null) return;
 
@@ -380,8 +403,8 @@ public final class VillagerTracker implements Listener {
         return team != null ? team : scoreboard.registerNewTeam(NAMETAG_TEAM_NAME);
     }
 
-    public @NotNull WrappedSignedProperty getTextures(Villager villager) {
-        SkinRelatedData data = getRelatedData(villager, null, false);
+    public @NotNull WrappedSignedProperty getTextures(LivingEntity living) {
+        SkinRelatedData data = getRelatedData(living, null, false);
 
         WrappedSignedProperty property = data.property();
         if (property != null && property.getName().equals("error")) {
@@ -392,19 +415,19 @@ public final class VillagerTracker implements Listener {
     }
 
     @Contract("_, _ -> new")
-    public @NotNull SkinRelatedData getRelatedData(Villager villager, @Nullable String differentProfession) {
-        return getRelatedData(villager, differentProfession, true);
+    public @NotNull SkinRelatedData getRelatedData(LivingEntity living, @Nullable String differentProfession) {
+        return getRelatedData(living, differentProfession, true);
     }
 
     @Contract("_, _, _ -> new")
-    public @NotNull SkinRelatedData getRelatedData(Villager villager, @Nullable String differentProfession, boolean random) {
-        IVillagerNPC npc = plugin.getConverter().getNPC(villager).orElse(null);
+    public @NotNull SkinRelatedData getRelatedData(LivingEntity living, @Nullable String differentProfession, boolean random) {
+        IVillagerNPC npc = plugin.getConverter().getNPC(living).orElse(null);
         if (npc == null) {
-            return new SkinRelatedData(null, null, -1, null, null, error("Invalid textures! The villager {" + villager.getEntityId() + "} isn't a custom one.", "true"));
+            return new SkinRelatedData(null, null, -1, null, null, error("Invalid textures! The villager {" + living.getEntityId() + "} isn't a custom one.", "true"));
         }
 
         String sex = npc.getSex();
-        String profession = villager.getProfession().name().toLowerCase();
+        String profession = PluginUtils.getProfessionOrType(living);
 
         String sexFile = sex + ".yml";
         Pair<File, FileConfiguration> pair = getFile(sexFile);
@@ -418,14 +441,14 @@ public final class VillagerTracker implements Listener {
         }
 
         Set<String> originalIds = section.getKeys(false);
-        int which = getSkinId(npc, originalIds, getModifiedKeys(config, villager, originalIds), random);
+        int which = getSkinId(npc, originalIds, getModifiedKeys(config, living, originalIds), random);
         return new SkinRelatedData(sex, profession, which, config, section, null);
     }
 
-    private Set<String> getModifiedKeys(FileConfiguration config, @NotNull Villager villager, Set<String> keys) {
+    private Set<String> getModifiedKeys(FileConfiguration config, @NotNull LivingEntity living, Set<String> keys) {
         Set<String> newKeys = new LinkedHashSet<>(keys);
 
-        boolean isAdult = villager.isAdult();
+        boolean isAdult = !(living instanceof Villager villager) || villager.isAdult();
         newKeys.removeIf(key -> {
             boolean forBabies = config.getBoolean("none." + key + ".for-babies");
             return (isAdult && forBabies) || (!isAdult && !forBabies);
@@ -471,10 +494,6 @@ public final class VillagerTracker implements Listener {
         if (kidId == -1) npc.setKidSkinTextureId(newId);
 
         return newId;
-    }
-
-    public boolean fixSleep() {
-        return !handler.getSleeping().isEmpty();
     }
 
     public Pair<File, FileConfiguration> getFile(String fileName) {
@@ -572,14 +591,16 @@ public final class VillagerTracker implements Listener {
             Color colorTop = new Color(pixelColorTop);
             Color colorBottom = new Color(pixelColorBottom);
 
+            String fileName = profession.replace("-", "_");
+
             BufferedImage professionOverlay = null;
             boolean isBaseClassic = false;
             if (PluginUtils.isSteveSkin(colorTop) || PluginUtils.isSteveSkin(colorBottom)) {
                 isBaseClassic = true;
-                InputStream professionResource = plugin.getResource("overlay/" + profession + "_steve.png");
+                InputStream professionResource = plugin.getResource("overlay/" + fileName + "_steve.png");
                 if (professionResource != null) professionOverlay = ImageIO.read(professionResource);
             } else {
-                InputStream professionResource = plugin.getResource("overlay/" + profession + "_alex.png");
+                InputStream professionResource = plugin.getResource("overlay/" + fileName + "_alex.png");
                 if (professionResource != null) professionOverlay = ImageIO.read(professionResource);
             }
 
@@ -590,7 +611,7 @@ public final class VillagerTracker implements Listener {
                     extra = random.nextBoolean() ? "_cod" : "_salmon";
                 } else extra = "";
 
-                String overlayPath = "overlay/" + profession + extra + ".png";
+                String overlayPath = "overlay/" + fileName + extra + ".png";
                 InputStream resource = plugin.getResource(overlayPath);
                 if (resource == null) {
                     if (!profession.equals("none")) {
@@ -634,18 +655,18 @@ public final class VillagerTracker implements Listener {
         return name.isEmpty() || name.equals(VillagerTracker.HIDE_NAMETAG_NAME);
     }
 
-    public void refreshNPCSkin(Villager villager, boolean happyParticles) {
+    public void refreshNPCSkin(LivingEntity living, boolean happyParticles) {
         // If the skin doesn't exist, first we create it, THEN we refresh.
-        WrappedSignedProperty textures = getTextures(villager);
+        WrappedSignedProperty textures = getTextures(living);
         if (!textures.getName().equals("error")) {
-            refreshNPC(villager);
+            refreshNPC(living);
             return;
         }
 
-        CompletableFuture<Skin> creator = getCreator(villager, textures);
+        CompletableFuture<Skin> creator = getCreator(living, textures);
         if (creator == null) return;
 
-        creator.thenAcceptAsync(skin -> refreshNPC(villager), mineskinClient.getRequestExecutor());
+        creator.thenAcceptAsync(skin -> refreshNPC(living), mineskinClient.getRequestExecutor());
 
         if (!happyParticles) return;
 
@@ -657,12 +678,12 @@ public final class VillagerTracker implements Listener {
                     cancel();
                     return;
                 }
-                if (random.nextInt(35) == 0) villager.playEffect(EntityEffect.VILLAGER_HAPPY);
+                if (random.nextInt(35) == 0) living.playEffect(EntityEffect.VILLAGER_HAPPY);
             }
         }.runTaskTimer(plugin, 1L, 1L);
     }
 
-    private @Nullable CompletableFuture<Skin> getCreator(Villager villager, @NotNull WrappedSignedProperty textures) {
+    private @Nullable CompletableFuture<Skin> getCreator(LivingEntity living, @NotNull WrappedSignedProperty textures) {
         Logger logger = plugin.getLogger();
 
         // Only log if error is severe.
@@ -671,7 +692,7 @@ public final class VillagerTracker implements Listener {
             return null;
         }
 
-        VillagerTracker.SkinRelatedData data = getRelatedData(villager, "none");
+        VillagerTracker.SkinRelatedData data = getRelatedData(living, "none");
 
         WrappedSignedProperty property = data.property();
         if (property != null && property.getName().equals("error")) {
@@ -684,7 +705,7 @@ public final class VillagerTracker implements Listener {
             return CompletableFuture.supplyAsync(() -> null);
         }
 
-        CompletableFuture<Skin> future = createSkin(plugin.getServer().getConsoleSender(), data.sex(), villager.isAdult(), data.profession(), data.id());
+        CompletableFuture<Skin> future = createSkin(plugin.getServer().getConsoleSender(), data.sex(), !(living instanceof Villager villager) || villager.isAdult(), data.profession(), data.id());
         if (future == null) {
             if (!data.profession().equals("none")) {
                 logger.severe("Failed to generate a new skin when trying to spawn/refresh: " + data + "!");
@@ -695,53 +716,9 @@ public final class VillagerTracker implements Listener {
         return future;
     }
 
-    private void refreshNPC(@NotNull Villager villager) {
-        removeNPC(villager.getEntityId());
-        spawnNPC(villager);
-    }
-
-    public void disguisePlayer(@NotNull Player player, @NotNull SkinRelatedData related, boolean isAdult) {
-        int skinId = related.id();
-        WrappedSignedProperty textures = related.property();
-
-        Pair<Integer, PropertyMap> pair = oldProperties.get(player.getUniqueId());
-        PropertyMap oldProperty = pair != null ? pair.getSecond() : null;
-
-        Property playerCurrentTextures = (oldProperty != null ?
-                oldProperty.get("textures") :
-                plugin.getConverter().getPlayerProfile(player).getProperties().get("textures")).iterator().next();
-
-        Messages messages = plugin.getMessages();
-
-        // Only check texture because signature is different after a re-join.
-        if (textures.getValue().equals(playerCurrentTextures.getValue())) {
-            messages.send(player, Messages.Message.SKIN_SAME_SKIN);
-            return;
-        }
-
-        oldProperty = plugin.getConverter().changePlayerSkin(player, textures.getValue(), textures.getSignature());
-        if (!oldProperties.containsKey(player.getUniqueId())) {
-            oldProperties.put(player.getUniqueId(), new Pair<>(skinId, oldProperty));
-        }
-
-        messages.send(player, Messages.Message.SKIN_DISGUISED, string -> string
-                .replace("%id%", String.valueOf(skinId))
-                .replace("%sex%", related.sex().equals("male") ? Config.MALE.asString() : Config.FEMALE.asString())
-                .replace("%profession%", plugin.getProfessionFormatted(related.profession()))
-                .replace("%age-stage%", isAdult ? Config.ADULT.asString() : Config.KID.asString()));
-    }
-
-    public boolean clearSkin(@NotNull Player player, boolean remove) {
-        UUID playerUUID = player.getUniqueId();
-
-        Pair<Integer, PropertyMap> pair = remove ? oldProperties.remove(playerUUID) : oldProperties.get(playerUUID);
-
-        PropertyMap oldProperties = pair != null ? pair.getSecond() : null;
-        if (oldProperties == null) return false;
-
-        Property property = oldProperties.get("textures").iterator().next();
-        plugin.getConverter().changePlayerSkin(player, property.getValue(), property.getSignature());
-        return true;
+    private void refreshNPC(@NotNull LivingEntity living) {
+        removeNPC(living.getEntityId());
+        spawnNPC(living);
     }
 
     public record SkinRelatedData(String sex,

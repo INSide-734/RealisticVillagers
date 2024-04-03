@@ -43,10 +43,7 @@ import org.bukkit.configuration.file.YamlConfiguration;
 import org.bukkit.enchantments.Enchantment;
 import org.bukkit.entity.*;
 import org.bukkit.event.Listener;
-import org.bukkit.inventory.EntityEquipment;
-import org.bukkit.inventory.EquipmentSlot;
-import org.bukkit.inventory.ItemFlag;
-import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.*;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.PluginManager;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -66,6 +63,7 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
+import java.util.logging.Level;
 
 @Getter
 public final class RealisticVillagers extends JavaPlugin {
@@ -90,7 +88,7 @@ public final class RealisticVillagers extends JavaPlugin {
     private final NamespacedKey tamedByVillagerKey = key("TamedByVillager");
     private final NamespacedKey isBeingLootedKey = key("IsBeingLooted");
     private final @Deprecated NamespacedKey ignoreVillagerKey = key("IgnoreVillager");
-    private final NamespacedKey villagerNameKey = key("VillagerName");
+    private final NamespacedKey villagerUUIDKey = key("VillagerUUID");
     private final NamespacedKey divorcePapersKey = key("DivorcePapers");
     private final NamespacedKey raidStatsKey = key("RaidStats");
     private final NamespacedKey skinDataKey = key("SkinDataID");
@@ -117,6 +115,9 @@ public final class RealisticVillagers extends JavaPlugin {
 
     private Messages messages;
     private INMSConverter converter;
+
+    private FileConfiguration newConfig = null;
+    private final File configFile = new File(getDataFolder(), "config.yml");
 
     private final List<String> defaultTargets = new ArrayList<>();
     private final Set<Gift> wantedItems = new HashSet<>();
@@ -346,6 +347,16 @@ public final class RealisticVillagers extends JavaPlugin {
                                     }
                                 },
                                 4)
+                        .addChange(
+                                aimVersion(4),
+                                temp -> {
+                                    List<String> lines = temp.getStringList("custom-nametags.lines");
+                                    if (lines.isEmpty()) return;
+
+                                    temp.set("custom-nametags.lines", null);
+                                    temp.set("custom-nametags.lines.villager", lines);
+                                },
+                                5)
                         .build());
 
         Function<FileConfiguration, List<String>> emptyIgnore = config -> Collections.emptyList();
@@ -519,6 +530,31 @@ public final class RealisticVillagers extends JavaPlugin {
         return getItem("divorce-papers").setData(divorcePapersKey, PersistentDataType.INTEGER, 1).build();
     }
 
+    @Override
+    public @NotNull FileConfiguration getConfig() {
+        if (newConfig == null) reloadConfig();
+        return newConfig;
+    }
+
+    @Override
+    public void reloadConfig() {
+        newConfig = YamlConfiguration.loadConfiguration(configFile);
+    }
+
+    @Override
+    public void saveConfig() {
+        try {
+            getConfig().save(configFile);
+        } catch (IOException exception) {
+            getLogger().log(Level.SEVERE, "Could not save config to " + configFile, exception);
+        }
+    }
+
+    @Override
+    public void saveDefaultConfig() {
+        if (!configFile.exists()) saveResource("config.yml", false);
+    }
+
     public ItemBuilder getItem(String path) {
         return getItem(path, null);
     }
@@ -562,7 +598,7 @@ public final class RealisticVillagers extends JavaPlugin {
             if (Strings.isNullOrEmpty(enchantmentString)) continue;
             String[] data = PluginUtils.splitData(enchantmentString);
 
-            Enchantment enchantment = Enchantment.getByKey(NamespacedKey.minecraft(data[0].toLowerCase()));
+            @SuppressWarnings("deprecation") Enchantment enchantment = Enchantment.getByKey(NamespacedKey.minecraft(data[0].toLowerCase()));
 
             int level;
             try {
@@ -757,8 +793,8 @@ public final class RealisticVillagers extends JavaPlugin {
         return GiftCategory.appliesToVillager(wantedItems, npc, item, isItemPickup);
     }
 
-    public @Nullable Villager getUnloadedOffline(@NotNull IVillagerNPC offline) {
-        Villager bukkit = offline.bukkit();
+    public @Nullable LivingEntity getUnloadedOffline(@NotNull IVillagerNPC offline) {
+        LivingEntity bukkit = offline.bukkit();
         if (bukkit != null) return bukkit;
 
         Location location = offline.getLastKnownPosition().asLocation();
@@ -776,7 +812,7 @@ public final class RealisticVillagers extends JavaPlugin {
         List<IVillagerNPC> family = tracker.getOfflineVillagers()
                 .stream()
                 .filter(offline -> {
-                    Villager bukkit = offline.bukkit();
+                    Villager bukkit = offline.bukkit() instanceof Villager villager ? villager : null;
                     UUID playerUUID = player.getUniqueId();
                     if (bukkit != null) {
                         Optional<IVillagerNPC> online = converter.getNPC(bukkit);
@@ -794,16 +830,16 @@ public final class RealisticVillagers extends JavaPlugin {
         new WhistleGUI(this, player, family.stream(), keyword);
     }
 
-    public void equipVillager(Villager villager, boolean force) {
+    public void equipVillager(LivingEntity living, boolean force) {
         if (invalidLoots()) return;
 
-        Optional<IVillagerNPC> npc = converter.getNPC(villager);
+        Optional<IVillagerNPC> npc = converter.getNPC(living);
         if (npc.isEmpty()
                 || npc.get().isEquipped()
                 || !force
-                || tracker.isInvalid(villager, true)) return;
+                || tracker.isInvalid(living, true)) return;
 
-        EntityEquipment equipment = villager.getEquipment();
+        EntityEquipment equipment = living.getEquipment();
         if (equipment == null) return;
 
         Map<EquipmentSlot, ItemLoot> equipped = new HashMap<>();
@@ -822,7 +858,7 @@ public final class RealisticVillagers extends JavaPlugin {
                 if (item == null) continue;
 
                 equipment.setItem(slot, loot.randomVanillaEnchantments() ?
-                        converter.randomVanillaEnchantments(villager.getLocation(), item) :
+                        converter.randomVanillaEnchantments(living.getLocation(), item) :
                         item);
 
                 equipped.put(slot, loot);
@@ -845,7 +881,7 @@ public final class RealisticVillagers extends JavaPlugin {
                     || (loot.crossbow() && testBothHand(equipped, inHand -> inHand.getType() == Material.CROSSBOW))) {
 
                 if (loot.randomVanillaEnchantments()) {
-                    item = converter.randomVanillaEnchantments(villager.getLocation(), item);
+                    item = converter.randomVanillaEnchantments(living.getLocation(), item);
                 }
 
                 if (loot.offHandIfPossible() && equipped.get(EquipmentSlot.OFF_HAND) == null) {
@@ -853,7 +889,9 @@ public final class RealisticVillagers extends JavaPlugin {
                     continue;
                 }
 
-                villager.getInventory().addItem(item);
+                if (living instanceof InventoryHolder holder) {
+                    holder.getInventory().addItem(item);
+                }
             }
         }
     }

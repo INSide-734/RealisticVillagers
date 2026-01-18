@@ -69,6 +69,7 @@ public class OfflineVillagerNPC implements IVillagerNPC {
     private final int tickTimer;
     private final float saturationLevel;
     private final float exhaustionLevel;
+    private final boolean isWanderingTrader;
 
     public static final OfflineVillagerNPC DUMMY_OFFLINE = dummy(null, null);
 
@@ -98,7 +99,7 @@ public class OfflineVillagerNPC implements IVillagerNPC {
                               int foodLevel,
                               int tickTimer,
                               float saturationLevel,
-                              float exhaustionLevel) {
+                              float exhaustionLevel, boolean isWanderingTrader) {
         this.uuid = uuid;
         this.villagerName = villagerName;
         this.sex = sex;
@@ -121,6 +122,7 @@ public class OfflineVillagerNPC implements IVillagerNPC {
         this.tickTimer = tickTimer;
         this.saturationLevel = saturationLevel;
         this.exhaustionLevel = exhaustionLevel;
+        this.isWanderingTrader = isWanderingTrader;
         this.entries.addAll(entries);
         this.partners.addAll(partners);
         this.childrens.addAll(childrens);
@@ -598,7 +600,8 @@ public class OfflineVillagerNPC implements IVillagerNPC {
                 wrapper.getFoodLevel(),
                 wrapper.getTickTimer(),
                 wrapper.getSaturationLevel(),
-                wrapper.getExhaustionLevel());
+                wrapper.getExhaustionLevel(),
+                wrapper.isWanderingTrader());
     }
 
     private static @Nullable GossipType getTypeBySerializedName(String name) {
@@ -636,7 +639,8 @@ public class OfflineVillagerNPC implements IVillagerNPC {
                 foodLevel,
                 tickTimer,
                 saturationLevel,
-                exhaustionLevel);
+                exhaustionLevel,
+                isWanderingTrader);
     }
 
     private List<OfflineDataWrapper> toOfflineDataWrapper(@NotNull List<IVillagerNPC> npcs) {
@@ -674,6 +678,7 @@ public class OfflineVillagerNPC implements IVillagerNPC {
                 null, null,
                 false,
                 false,
-                20, 0, 5.0f, 0.0f);
+                20, 0, 5.0f, 0.0f,
+                false);
     }
 }

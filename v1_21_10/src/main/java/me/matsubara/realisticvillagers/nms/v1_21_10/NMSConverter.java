@@ -203,8 +203,10 @@ public class NMSConverter implements INMSConverter {
             Optional<IVillagerNPC> optional = getNPC(villager);
             if (optional.isEmpty()) return null;
 
-            VillagerNPC npc = (VillagerNPC) optional.get();
-            npc.setWasInfected(isInfection);
+            IVillagerNPC npc = optional.get();
+            if (npc instanceof VillagerNPC temp) {
+                temp.setWasInfected(isInfection);
+            }
 
             if (npc.getOffline() instanceof OfflineVillagerNPC offline) {
                 byte[] primitive = RealisticVillagers.VILLAGER_DATA.toPrimitive(

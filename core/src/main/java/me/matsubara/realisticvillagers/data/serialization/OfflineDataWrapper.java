@@ -41,6 +41,7 @@ public class OfflineDataWrapper implements ConfigurationSerializable {
     private final int tickTimer;
     private final float saturationLevel;
     private final float exhaustionLevel;
+    private final boolean isWanderingTrader;
 
     public static final String UUID = "UUID";
     public static final String NAME = "Name";
@@ -70,6 +71,7 @@ public class OfflineDataWrapper implements ConfigurationSerializable {
     public static final String FOOD_TICK_TIMER = "FoodTickTimer";
     public static final String FOOD_SATURATION_LEVEL = "FoodSaturationLevel";
     public static final String FOOD_EXHAUSTION_LEVEL = "FoodExhaustionLevel";
+    public static final String IS_WANDERING_TRADER = "IsWanderingTrader";
 
     public OfflineDataWrapper(UUID uuid,
                               String villagerName,
@@ -97,7 +99,8 @@ public class OfflineDataWrapper implements ConfigurationSerializable {
                               int foodLevel,
                               int tickTimer,
                               float saturationLevel,
-                              float exhaustionLevel) {
+                              float exhaustionLevel,
+                              boolean isWanderingTrader) {
         this.uuid = uuid;
         this.villagerName = villagerName;
         this.sex = sex;
@@ -120,6 +123,7 @@ public class OfflineDataWrapper implements ConfigurationSerializable {
         this.tickTimer = tickTimer;
         this.saturationLevel = saturationLevel;
         this.exhaustionLevel = exhaustionLevel;
+        this.isWanderingTrader = isWanderingTrader;
         this.partners.addAll(partners);
         this.childrens.addAll(childrens);
         this.targetEntities.addAll(targetEntities);
@@ -160,6 +164,7 @@ public class OfflineDataWrapper implements ConfigurationSerializable {
         result.put(FOOD_TICK_TIMER, tickTimer);
         result.put(FOOD_SATURATION_LEVEL, saturationLevel);
         result.put(FOOD_EXHAUSTION_LEVEL, exhaustionLevel);
+        result.put(IS_WANDERING_TRADER, isWanderingTrader);
         return result;
     }
 
@@ -195,6 +200,7 @@ public class OfflineDataWrapper implements ConfigurationSerializable {
         int tickTimer = PluginUtils.getOrDefault(args, FOOD_TICK_TIMER, Integer.class);
         float saturationLevel = PluginUtils.getOrDefault(args, FOOD_SATURATION_LEVEL, Float.class, 5.0f);
         float exhaustionLevel = PluginUtils.getOrDefault(args, FOOD_EXHAUSTION_LEVEL, Float.class);
+        boolean isWanderingTrader = PluginUtils.getOrDefault(args, IS_WANDERING_TRADER, Boolean.class);
 
         return new OfflineDataWrapper(
                 uuid,
@@ -223,6 +229,7 @@ public class OfflineDataWrapper implements ConfigurationSerializable {
                 foodLevel,
                 tickTimer,
                 saturationLevel,
-                exhaustionLevel);
+                exhaustionLevel,
+                isWanderingTrader);
     }
 }

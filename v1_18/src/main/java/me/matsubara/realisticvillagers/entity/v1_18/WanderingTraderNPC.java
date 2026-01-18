@@ -558,6 +558,7 @@ public class WanderingTraderNPC extends WanderingTrader implements IVillagerNPC 
         if (villagerName != null) villagerTag.putString(OfflineVillagerNPC.NAME, villagerName);
         if (sex != null) villagerTag.putString(OfflineVillagerNPC.SEX, sex);
         villagerTag.putInt(OfflineVillagerNPC.SKIN_TEXTURE_ID, skinTextureId);
+        villagerTag.putBoolean(OfflineVillagerNPC.IS_WANDERING_TRADER, true);
         tag.put(plugin.getNpcValuesKey().toString(), villagerTag);
     }
 
@@ -690,6 +691,11 @@ public class WanderingTraderNPC extends WanderingTrader implements IVillagerNPC 
     @Override
     public void attack(LivingEntity entity) {
 
+    }
+
+    @Override
+    public boolean isWanderingTrader() {
+        return true;
     }
 
     @Override

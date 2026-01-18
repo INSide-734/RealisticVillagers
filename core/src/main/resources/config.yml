@@ -1532,6 +1532,8 @@ revive:
   only-with-cross: true
   # Chance of an emerald block breaking when struck by lightning.
   break-emerald-chance: 0.1
+  # Whether to be able to revive wandering traders.
+  include-wandering-trader: true
   head-item:
     url: SELF
     material: PLAYER_HEAD

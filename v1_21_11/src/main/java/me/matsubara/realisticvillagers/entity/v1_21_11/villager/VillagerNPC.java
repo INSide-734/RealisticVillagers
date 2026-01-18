@@ -825,6 +825,11 @@ public class VillagerNPC extends Villager implements IVillagerNPC, CrossbowAttac
     }
 
     @Override
+    public boolean canUseNonMeleeWeapon(ItemStack item) {
+        return true;
+    }
+
+    @Override
     public void die(DamageSource source) {
         super.die(source);
 
@@ -1217,7 +1222,8 @@ public class VillagerNPC extends Villager implements IVillagerNPC, CrossbowAttac
                 foodData.getFoodLevel(),
                 foodData.getTickTimer(),
                 foodData.getSaturationLevel(),
-                foodData.getExhaustionLevel());
+                foodData.getExhaustionLevel(),
+                false);
     }
 
     @Override
@@ -1668,7 +1674,7 @@ public class VillagerNPC extends Villager implements IVillagerNPC, CrossbowAttac
 
     @Override
     protected AABB getAttackBoundingBox(double range) {
-        return super.getAttackBoundingBox(Config.MELEE_ATTACK_RANGE.asDouble() / 2.5d);
+        return super.getAttackBoundingBox(getMeleeAttackRangeSqr() / 2.5d);
     }
 
     public int getMeleeAttackRangeSqr() {
@@ -1884,6 +1890,11 @@ public class VillagerNPC extends Villager implements IVillagerNPC, CrossbowAttac
     public void attack(org.bukkit.entity.LivingEntity entity) {
         // Maybe we should check if the NPC can attack and the target isn't a family member.
         VillagerPanicTrigger.handleFightReaction(getBrain(), ((CraftLivingEntity) entity).getHandle(), TargetReason.DEFEND);
+    }
+
+    @Override
+    public boolean isWanderingTrader() {
+        return false;
     }
 
     @Override

@@ -71,6 +71,7 @@ import org.bukkit.craftbukkit.v1_21_R7.CraftRaid;
 import org.bukkit.craftbukkit.v1_21_R7.CraftWorld;
 import org.bukkit.craftbukkit.v1_21_R7.block.CraftBlock;
 import org.bukkit.craftbukkit.v1_21_R7.entity.CraftEntity;
+import org.bukkit.craftbukkit.v1_21_R7.entity.CraftLivingEntity;
 import org.bukkit.craftbukkit.v1_21_R7.entity.CraftPlayer;
 import org.bukkit.craftbukkit.v1_21_R7.entity.CraftVillager;
 import org.bukkit.craftbukkit.v1_21_R7.persistence.CraftPersistentDataAdapterContext;
@@ -204,8 +205,10 @@ public class NMSConverter implements INMSConverter {
             Optional<IVillagerNPC> optional = getNPC(villager);
             if (optional.isEmpty()) return null;
 
-            VillagerNPC npc = (VillagerNPC) optional.get();
-            npc.setWasInfected(isInfection);
+            IVillagerNPC npc = optional.get();
+            if (npc instanceof VillagerNPC temp) {
+                temp.setWasInfected(isInfection);
+            }
 
             if (npc.getOffline() instanceof OfflineVillagerNPC offline) {
                 byte[] primitive = RealisticVillagers.VILLAGER_DATA.toPrimitive(
@@ -396,16 +399,15 @@ public class NMSConverter implements INMSConverter {
     public void spawnFromTag(@NotNull Location location, String tag) {
         Preconditions.checkArgument(location.getWorld() != null && !tag.isEmpty(), "Either world is null or tag is empty!");
 
+        IVillagerNPC npc = plugin.getConverter().getNPCFromTag(tag);
+        boolean trader = npc != null && npc.isWanderingTrader();
+
         ServerLevel level = ((CraftWorld) location.getWorld()).getHandle();
-        VillagerNPC villager = new VillagerNPC(EntityType.VILLAGER, level);
+        net.minecraft.world.entity.npc.villager.AbstractVillager villager = trader ?
+                new WanderingTraderNPC(EntityType.WANDERING_TRADER, level) :
+                new VillagerNPC(EntityType.VILLAGER, level);
 
-        loadDataFromTag(villager.getBukkitEntity(), tag);
-
-        float health = (float) Math.min(villager.getMaxHealth(), Config.REVIVE_SPAWN_VALUES_HEALTH.asDouble());
-        villager.setHealth(health);
-
-        int foodLevel = Math.min(20, Config.REVIVE_SPAWN_VALUES_FOOD_LEVEL.asInt());
-        villager.setFoodLevel(foodLevel);
+        loadDataFromTag((CraftLivingEntity) villager.getBukkitEntity(), tag);
 
         for (String effectString : Config.REVIVE_SPAWN_VALUES_POTION_EFFECTS.asStringList()) {
             if (Strings.isNullOrEmpty(effectString)) continue;
@@ -416,14 +418,24 @@ public class NMSConverter implements INMSConverter {
                 // Default = 5 seconds, level 1 (amplifier 0).
                 int duration = data.length > 1 ? PluginUtils.getRangedAmount(data[1]) : 100;
                 int amplifier = data.length > 2 ? PluginUtils.getRangedAmount(data[2]) - 1 : 0;
-                villager.getBukkitEntity().addPotionEffect(new PotionEffect(type, duration, amplifier));
+                ((CraftLivingEntity) villager.getBukkitEntity())
+                        .addPotionEffect(new PotionEffect(type, duration, amplifier));
             }
         }
 
         villager.setPos(location.getX(), location.getY(), location.getZ());
         villager.setYRot(location.getYaw());
         villager.setXRot(0.0f);
-        villager.setRevivingTicks(60);
+
+        float health = (float) Math.min(villager.getMaxHealth(), Config.REVIVE_SPAWN_VALUES_HEALTH.asDouble());
+        villager.setHealth(health);
+
+        int foodLevel = Math.min(20, Config.REVIVE_SPAWN_VALUES_FOOD_LEVEL.asInt());
+
+        if (villager instanceof VillagerNPC temp) {
+            temp.setFoodLevel(foodLevel);
+            temp.setRevivingTicks(60);
+        }
 
         level.addFreshEntity(villager, CreatureSpawnEvent.SpawnReason.DEFAULT);
     }

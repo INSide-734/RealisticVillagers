@@ -194,6 +194,7 @@ public enum Config {
     REVIVE_ONLY_AT_NIGHT("revive.only-at-night"),
     REVIVE_ONLY_WITH_CROSS("revive.only-with-cross"),
     REVIVE_BREAK_EMERALD_CHANCE("revive.break-emerald-chance"),
+    REVIVE_INCLUDE_WANDERING_TRADER("revive.include-wandering-trader"),
     REVIVE_SPAWN_VALUES_HEALTH("revive.spawn-values.health"),
     REVIVE_SPAWN_VALUES_FOOD_LEVEL("revive.spawn-values.food-level"),
     REVIVE_SPAWN_VALUES_POTION_EFFECTS("revive.spawn-values.potion-effects"),

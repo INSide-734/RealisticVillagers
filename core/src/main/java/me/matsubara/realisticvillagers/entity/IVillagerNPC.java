@@ -248,6 +248,8 @@ public interface IVillagerNPC {
 
     void attack(LivingEntity entity);
 
+    boolean isWanderingTrader();
+
     default void resetNametagsFor(@NotNull RealisticVillagers plugin, Player player) {
         LivingEntity bukkit = bukkit();
         if (bukkit == null || player == null) return;

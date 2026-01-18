@@ -144,6 +144,9 @@ public class ReviveManager implements Listener {
         LivingEntity bukkit = event.getNPC().bukkit();
         if (bukkit == null || !bukkit.isDead()) return;
 
+        if (!Config.REVIVE_INCLUDE_WANDERING_TRADER.asBool()
+                && bukkit instanceof WanderingTrader) return;
+
         handleTombstone(bukkit);
     }
 

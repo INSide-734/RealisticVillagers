@@ -1201,7 +1201,8 @@ public class VillagerNPC extends Villager implements IVillagerNPC, CrossbowAttac
                 foodData.getFoodLevel(),
                 foodData.getTickTimer(),
                 foodData.getSaturationLevel(),
-                foodData.getExhaustionLevel());
+                foodData.getExhaustionLevel(),
+                false);
     }
 
     @Override
@@ -1648,7 +1649,7 @@ public class VillagerNPC extends Villager implements IVillagerNPC, CrossbowAttac
             box = getBoundingBox();
         }
 
-        double xz = Config.MELEE_ATTACK_RANGE.asDouble() / 2.5d;
+        double xz = getMeleeAttackRangeSqr() / 2.5d;
         return box.inflate(xz, 0.0, xz);
     }
 
@@ -1867,6 +1868,11 @@ public class VillagerNPC extends Villager implements IVillagerNPC, CrossbowAttac
     public void attack(org.bukkit.entity.LivingEntity entity) {
         // Maybe we should check if the NPC can attack and the target isn't a family member.
         VillagerPanicTrigger.handleFightReaction(getBrain(), ((CraftLivingEntity) entity).getHandle(), TargetReason.DEFEND);
+    }
+
+    @Override
+    public boolean isWanderingTrader() {
+        return false;
     }
 
     @Override

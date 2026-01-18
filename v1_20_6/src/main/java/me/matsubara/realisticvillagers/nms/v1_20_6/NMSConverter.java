@@ -185,9 +185,11 @@ public class NMSConverter implements INMSConverter {
             Optional<IVillagerNPC> optional = getNPC(villager);
             if (optional.isEmpty()) return null;
 
-            VillagerNPC npc = (VillagerNPC) optional.get();
-            npc.setWasInfected(isInfection);
-            npc.savePluginData(tag);
+            IVillagerNPC npc = optional.get();
+            if (npc instanceof VillagerNPC temp) {
+                temp.setWasInfected(isInfection);
+                temp.savePluginData(tag);
+            }
 
             return tag.get(plugin.getNpcValuesKey().toString()).toString();
         } else if (entity instanceof ZombieVillager) {

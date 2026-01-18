@@ -63,6 +63,7 @@ public class OfflineVillagerNPC implements IVillagerNPC {
     public static final String SHOULDER_ENTITY_RIGHT = "ShoulderEntityRight";
     public static final String GOSSIPS = "Gossips";
     public static final String PLAYERS = "Players";
+    public static final String IS_WANDERING_TRADER = "IsWanderingTrader";
     public static final BiFunction<VillagerTracker, Tag, IVillagerNPC> OFFLINE_MAPPER = (tracker, input) -> input instanceof CompoundTag compound ?
             OfflineVillagerNPC.from(compound) :
             tracker.getOffline(NbtUtils.loadUUID(input));
@@ -608,6 +609,11 @@ public class OfflineVillagerNPC implements IVillagerNPC {
     @Override
     public void attack(LivingEntity entity) {
 
+    }
+
+    @Override
+    public boolean isWanderingTrader() {
+        return tag.getBoolean(IS_WANDERING_TRADER);
     }
 
     private static @NotNull LastKnownPosition lastPositionFrom(@NotNull CompoundTag tag) {

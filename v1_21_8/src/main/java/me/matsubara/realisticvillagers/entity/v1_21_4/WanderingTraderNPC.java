@@ -537,7 +537,8 @@ public class WanderingTraderNPC extends WanderingTrader implements IVillagerNPC,
                 0,
                 0,
                 0.0f,
-                0.0f);
+                0.0f,
+                true);
     }
 
     @Override
@@ -692,6 +693,11 @@ public class WanderingTraderNPC extends WanderingTrader implements IVillagerNPC,
     @Override
     public void attack(LivingEntity entity) {
 
+    }
+
+    @Override
+    public boolean isWanderingTrader() {
+        return true;
     }
 
     @Override

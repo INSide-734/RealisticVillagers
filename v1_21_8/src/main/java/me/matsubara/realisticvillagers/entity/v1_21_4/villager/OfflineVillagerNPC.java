@@ -66,6 +66,7 @@ public class OfflineVillagerNPC implements IVillagerNPC, ConfigurationSerializab
     private final int tickTimer;
     private final float saturationLevel;
     private final float exhaustionLevel;
+    private final boolean isWanderingTrader;
 
     public static final String UUID = "UUID";
     public static final String NAME = "Name";
@@ -95,6 +96,7 @@ public class OfflineVillagerNPC implements IVillagerNPC, ConfigurationSerializab
     public static final String FOOD_TICK_TIMER = "FoodTickTimer";
     public static final String FOOD_SATURATION_LEVEL = "FoodSaturationLevel";
     public static final String FOOD_EXHAUSTION_LEVEL = "FoodExhaustionLevel";
+    public static final String IS_WANDERING_TRADER = "IsWanderingTrader";
 
     public static final OfflineVillagerNPC DUMMY_OFFLINE = dummy(null, null);
 
@@ -124,7 +126,7 @@ public class OfflineVillagerNPC implements IVillagerNPC, ConfigurationSerializab
                               int foodLevel,
                               int tickTimer,
                               float saturationLevel,
-                              float exhaustionLevel) {
+                              float exhaustionLevel, boolean isWanderingTrader) {
         this.uuid = uuid;
         this.villagerName = villagerName;
         this.sex = sex;
@@ -147,6 +149,7 @@ public class OfflineVillagerNPC implements IVillagerNPC, ConfigurationSerializab
         this.tickTimer = tickTimer;
         this.saturationLevel = saturationLevel;
         this.exhaustionLevel = exhaustionLevel;
+        this.isWanderingTrader = isWanderingTrader;
         this.entries.addAll(entries);
         this.partners.addAll(partners);
         this.childrens.addAll(childrens);
@@ -616,6 +619,7 @@ public class OfflineVillagerNPC implements IVillagerNPC, ConfigurationSerializab
         result.put(FOOD_TICK_TIMER, tickTimer);
         result.put(FOOD_SATURATION_LEVEL, saturationLevel);
         result.put(FOOD_EXHAUSTION_LEVEL, exhaustionLevel);
+        result.put(IS_WANDERING_TRADER, isWanderingTrader);
         return result;
     }
 
@@ -670,6 +674,7 @@ public class OfflineVillagerNPC implements IVillagerNPC, ConfigurationSerializab
         int tickTimer = PluginUtils.getOrDefault(args, FOOD_TICK_TIMER, Integer.class);
         float saturationLevel = PluginUtils.getOrDefault(args, FOOD_SATURATION_LEVEL, Float.class, 5.0f);
         float exhaustionLevel = PluginUtils.getOrDefault(args, FOOD_EXHAUSTION_LEVEL, Float.class);
+        boolean isWanderingTrader = PluginUtils.getOrDefault(args, IS_WANDERING_TRADER, Boolean.class);
 
         return new OfflineVillagerNPC(
                 uuid,
@@ -698,7 +703,8 @@ public class OfflineVillagerNPC implements IVillagerNPC, ConfigurationSerializab
                 foodLevel,
                 tickTimer,
                 saturationLevel,
-                exhaustionLevel);
+                exhaustionLevel,
+                isWanderingTrader);
     }
 
     private static CompoundTag getShoulderEntity(Map<String, Object> args, String name) {
@@ -726,6 +732,7 @@ public class OfflineVillagerNPC implements IVillagerNPC, ConfigurationSerializab
                 null, null,
                 false,
                 false,
-                20, 0, 5.0f, 0.0f);
+                20, 0, 5.0f, 0.0f,
+                false);
     }
 }
